@@ -1,35 +1,28 @@
-from selenium import webdriver
+# data_processor.py
+import time
+from typing import List, Dict, Any
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-import time
-from typing import List, Dict, Any
-import urllib.parse
-
-chrome_options = Options()
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-#chrome_options.add_argument("--headless") # пока что без headless режима
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--window-size=1920,1080")
-
-service = Service(ChromeDriverManager().install())  # Автоматически управляет версией ChromeDriver
-
-driver = webdriver.Chrome(service=service, options=chrome_options)
 
 
-def get_league_matches(url: str) -> List[Dict[str, Any]]:
+def _safe_int(s: str):
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        return int(s)
+    except Exception:
+        return s
+
+
+def get_league_matches(driver, url: str) -> List[Dict[str, Any]]:
     wait = WebDriverWait(driver, 10)
 
     driver.get(url)
-
-    # ждём появления блока с результатами
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".event.event--results")))
 
-    # Кликаем на "Показать больше матчей" пока кнопка есть
+    # жмём "Показать больше матчей", пока кнопка есть
     while True:
         try:
             show_more = wait.until(
@@ -40,9 +33,7 @@ def get_league_matches(url: str) -> List[Dict[str, Any]]:
         except Exception:
             break
 
-    # Собираем все матчи
     matches = driver.find_elements(By.CSS_SELECTOR, ".event__match")
-
     results = []
     for match in matches:
         try:
@@ -57,58 +48,18 @@ def get_league_matches(url: str) -> List[Dict[str, Any]]:
             participants = []
 
         if link and participants:
-            results.append({
-                "url": link,
-                "participants": participants
-            })
+            results.append({"url": link, "participants": participants})
 
     return results
 
 
-def build_team_match_index(matches: List[Dict[str, Any]], limit: int = 10) -> Dict[str, List[Dict[str, Any]]]:
-    # Собираем уникальные команды
-    teams = set()
-    for m in matches:
-        teams.update(m["participants"])
-    teams = list(teams)
-
-    # Создаём словарь команда -> список матчей
-    team_matches = {team: [] for team in teams}
-
-    for team in teams:
-        count = 0
-        for match in matches:
-            if team in match["participants"]:
-                team_matches[team].append(match)
-                count += 1
-                if count >= limit:
-                    break
-
-    return team_matches
-
-
-def _safe_int(s: str):
-    s = s.strip()
-    try:
-        return int(s)
-    except Exception:
-        return s  # если не число — вернуть как есть
-
-
-def get_match_statistics(url: str) -> Dict[str, Any]:
-    """
-    Открывает страницу матча, приводит фрагмент к '#/match-summary/match-statistics/0',
-    ждёт загрузки статистики и возвращает dict с home/away командой, 'score' и 'sections'.
-    """
+def get_match_statistics(driver, url: str) -> Dict[str, Any]:
     wait = WebDriverWait(driver, 15)
 
-    # Нормализация URL: удалить всё после # и поставить нужный фрагмент
     base = url.split('#')[0]
     target_url = base + "#/match-summary/match-statistics/0"
-
     driver.get(target_url)
 
-    # ждём появления контейнера статистики
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[data-analytics-context="tab-match-statistics"]')))
     time.sleep(0.8)
 
@@ -125,7 +76,6 @@ def get_match_statistics(url: str) -> Dict[str, Any]:
         result["home_team"] = home_team_el.text.strip()
     except Exception:
         pass
-
     try:
         away_team_el = driver.find_element(By.CSS_SELECTOR, ".duelParticipant__away")
         result["away_team"] = away_team_el.text.strip()
@@ -136,10 +86,8 @@ def get_match_statistics(url: str) -> Dict[str, Any]:
     try:
         spans = driver.find_elements(By.CSS_SELECTOR, ".detailScore__wrapper>span")
         if len(spans) >= 2:
-            home_score = spans[0].text.strip()
-            away_score = spans[1].text.strip()
-            result["score"]["home"] = _safe_int(home_score)
-            result["score"]["away"] = _safe_int(away_score)
+            result["score"]["home"] = _safe_int(spans[0].text)
+            result["score"]["away"] = _safe_int(spans[1].text)
     except Exception:
         pass
 
@@ -178,8 +126,8 @@ def get_match_statistics(url: str) -> Dict[str, Any]:
                     pass
 
                 section_data[category_name] = {
-                    "home": _safe_int(home_val) if home_val else None,
-                    "away": _safe_int(away_val) if away_val else None
+                    "home": _safe_int(home_val),
+                    "away": _safe_int(away_val)
                 }
 
             if section_data:
@@ -188,24 +136,3 @@ def get_match_statistics(url: str) -> Dict[str, Any]:
             continue
 
     return result
-
-
-
-# ----------------- Пример использования -----------------
-try:
-    sample_match_url = 'https://www.flashscorekz.com/match/football/lh1OJUtR/#/match-summary/match-statistics/0'
-    stats = get_match_statistics(sample_match_url)
-    print("\n--- Счёт ---")
-    print(stats["score"])
-    print("\n--- Секции статистики ---")
-    for section_name, section_content in stats["sections"].items():
-        print(f"\n[{section_name}]")
-        for cat, vals in section_content.items():
-            print(f"  {cat}: home={vals['home']}, away={vals['away']}")
-    print(stats)
-
-except Exception as exc:
-    print("Произошла ошибка:", exc)
-
-finally:
-    driver.quit()
