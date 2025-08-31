@@ -4,7 +4,7 @@ from src.data_processor import get_league_matches, get_match_statistics
 
 def test_get_league_matches(driver):
     """
-    Проверяет, что в Английской Премьер-Лиге найдено ровно 384 сыгранных матча.
+    Проверяет, что в Английской Премьер-Лиге найдено ровно 380 сыгранных матчей.
     """
     url = "https://www.flashscorekz.com/football/england/premier-league-2024-2025/results/"
     matches = get_league_matches(driver, url)
